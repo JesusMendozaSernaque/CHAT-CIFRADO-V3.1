@@ -1,0 +1,63 @@
+body {
+    min-height: 100vh;
+    background: radial-gradient(circle at top, #268c8a 0, #057b52 55%);
+}
+
+.chat-card {
+     background: linear-gradient(135deg, #2b9d53, #ffffff);
+    border-radius: 1rem;
+    overflow: hidden;
+}
+
+.bg-gradient {
+    background: linear-gradient(135deg, #0f766e, #22c55e);
+}
+
+.bg-gradient-footer {
+    background: linear-gradient(135deg, #ffffffe2, #ffffff);
+    color: #000000;
+}
+
+.messages-area {
+    height: 360px;
+    overflow-y: auto;
+}
+
+.message-row {
+    margin-bottom: 0.35rem;
+}
+
+.message-row .meta {
+    font-size: 0.7rem;
+    opacity: 0.7;
+}
+
+.message-bubble {
+    display: inline-block;
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.75rem;
+    max-width: 80%;
+    word-wrap: break-word;
+}
+
+.message-own {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    color: #0f172a;
+}
+
+.message-other {
+    background: rgba(15, 23, 42, 0.85);
+    color: #e5e7eb;
+}
+
+.cipher-info {
+    font-size: 0.65rem;
+    opacity: 0.7;
+}
+
+code {
+    font-size: 0.7rem;
+}
+
+
+
