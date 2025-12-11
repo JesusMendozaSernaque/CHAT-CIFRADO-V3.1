@@ -1,4 +1,4 @@
-// Chat E2E con ECDH (P-256) + KDF-SHA256 + AES-GCM + Lista de Contactos
+// Chat E2E con ECDH (P-256) + KDF-SHA256 + AES-GCM + Chats Independientes
 
 const ChatE2E = (() => {
   const encoder = new TextEncoder();
@@ -9,8 +9,10 @@ const ChatE2E = (() => {
   let keyPair = null;
   let sharedKeys = new Map(); // Map<username, {aesKey, fingerprint}>
   let currentPeer = null; // Usuario seleccionado actualmente
-  let onlineUsers = new Set(); // Usuarios conectados
+  let onlineUsers = new Map(); // Map<username, {online: boolean, lastSeen: timestamp}>
   let favoriteContacts = new Set(); // Contactos favoritos
+  let chatHistory = new Map(); // Map<username, Array<{from, text, isOwn, info, timestamp}>>
+  let heartbeatInterval = null;
 
   const el = {};
 
@@ -133,7 +135,7 @@ const ChatE2E = (() => {
     return decoder.decode(plaintextBuf);
   }
 
-  // ============ GESTIÓN DE CONTACTOS ============
+  // ============ GESTIÓN DE FAVORITOS ============
   function loadFavorites() {
     const key = `chat_favorites_${username}`;
     try {
@@ -163,112 +165,42 @@ const ChatE2E = (() => {
     updateContactsList();
   }
 
-  function updateContactsList() {
-    const container = el.contactsList;
-    if (!container) {
-      log("❌ Elemento contactsList no encontrado");
-      return;
+  // ============ GESTIÓN DE HISTORIAL DE CHAT ============
+  function addMessageToHistory(peerName, message) {
+    if (!chatHistory.has(peerName)) {
+      chatHistory.set(peerName, []);
     }
-
-    log("📋 Actualizando lista. Usuarios online:", onlineUsers.size, [...onlineUsers]);
-
-    if (onlineUsers.size === 0) {
-      container.innerHTML = `
-        <div class="text-center text-muted small">
-          <i class="bi bi-inbox"></i>
-          <p class="mb-0">Esperando otros usuarios...</p>
-          <p class="mb-0 mt-1"><small>Abre otra pestaña para probar</small></p>
-        </div>
-      `;
-      if (el.onlineCount) el.onlineCount.textContent = "0";
-      return;
-    }
-
-    if (el.onlineCount) el.onlineCount.textContent = onlineUsers.size;
-
-    const contacts = [...onlineUsers].sort((a, b) => {
-      const aFav = favoriteContacts.has(a);
-      const bFav = favoriteContacts.has(b);
-      if (aFav && !bFav) return -1;
-      if (!aFav && bFav) return 1;
-      return a.localeCompare(b);
-    });
-
-    container.innerHTML = contacts.map(contactName => {
-      const keyData = sharedKeys.get(contactName);
-      const isActive = currentPeer === contactName;
-      const isFav = favoriteContacts.has(contactName);
-      const fp = keyData ? keyData.fingerprint : "Sin clave";
-
-      return `
-        <div class="contact-item ${isActive ? 'active' : ''}" data-contact="${contactName}">
-          <div class="d-flex justify-content-between align-items-start">
-            <div class="flex-grow-1">
-              <div class="contact-name">
-                <span class="status-dot status-online"></span>
-                ${contactName}
-                ${isFav ? '<i class="bi bi-star-fill text-warning ms-1"></i>' : ''}
-              </div>
-              <div class="contact-fingerprint">${fp}</div>
-            </div>
-            <button class="btn btn-favorite btn-outline-warning" data-favorite="${contactName}">
-              <i class="bi ${isFav ? 'bi-star-fill' : 'bi-star'}"></i>
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    // Event listeners para contactos
-    container.querySelectorAll('.contact-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        if (e.target.closest('.btn-favorite')) return;
-        const contactName = item.dataset.contact;
-        selectPeer(contactName);
-      });
-    });
-
-    container.querySelectorAll('.btn-favorite').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const contactName = btn.dataset.favorite;
-        toggleFavorite(contactName);
-      });
-    });
-
-    log("✅ Lista actualizada con", contacts.length, "contactos");
-  }
-
-  function selectPeer(peerName) {
-    currentPeer = peerName;
-    updateContactsList();
+    const history = chatHistory.get(peerName);
+    history.push(message);
     
-    const badge = document.getElementById('currentPeer');
-    if (badge) {
-      badge.textContent = `Chateando con: ${peerName}`;
-      badge.style.display = 'inline-block';
+    // Limitar a 500 mensajes por chat
+    if (history.length > 500) {
+      history.shift();
     }
-
-    const keyData = sharedKeys.get(peerName);
-    if (keyData) {
-      el.fingerprint.textContent = keyData.fingerprint;
-      if (el.sharedInfo) {
-        el.sharedInfo.value = `Chateando con: ${peerName}\nFingerprint: ${keyData.fingerprint}`;
-      }
-    }
-
-    appendMessage({
-      from: "Sistema",
-      text: `Ahora chateando con ${peerName}`,
-      isOwn: false,
-      info: ""
-    });
-
-    setControlsEnabled(true);
   }
 
-  // ============ MENSAJES UI ============
-  function appendMessage({ from, text, isOwn, info }) {
+  function loadChatHistory(peerName) {
+    const history = chatHistory.get(peerName) || [];
+    el.messages.innerHTML = "";
+    
+    if (history.length === 0) {
+      el.messages.innerHTML = `
+        <div class="text-center text-muted small mt-4">
+          <i class="bi bi-chat-dots"></i>
+          <p class="mb-0">Nuevo chat con ${peerName}</p>
+          <p class="mb-0 mt-1"><small>Los mensajes aparecerán aquí</small></p>
+        </div>
+      `;
+      return;
+    }
+
+    history.forEach(msg => {
+      renderMessage(msg);
+    });
+    el.messages.scrollTop = el.messages.scrollHeight;
+  }
+
+  function renderMessage({ from, text, isOwn, info }) {
     const wrapper = document.createElement("div");
     wrapper.className = `message-row ${isOwn ? "text-end" : "text-start"}`;
 
@@ -289,7 +221,169 @@ const ChatE2E = (() => {
     wrapper.appendChild(cipherInfo);
 
     el.messages.appendChild(wrapper);
-    el.messages.scrollTop = el.messages.scrollHeight;
+  }
+
+  // ============ GESTIÓN DE ESTADO DE USUARIOS ============
+  function updateUserStatus(username, isOnline) {
+    const userData = onlineUsers.get(username) || { online: false, lastSeen: Date.now() };
+    userData.online = isOnline;
+    userData.lastSeen = Date.now();
+    onlineUsers.set(username, userData);
+    updateContactsList();
+  }
+
+  function startHeartbeat() {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    
+    heartbeatInterval = setInterval(() => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: "heartbeat",
+          from: username,
+          ts: Date.now()
+        }));
+      }
+    }, 15000); // Cada 15 segundos
+  }
+
+  function checkInactiveUsers() {
+    const now = Date.now();
+    const timeout = 30000; // 30 segundos sin heartbeat = desconectado
+    
+    for (const [user, data] of onlineUsers.entries()) {
+      if (data.online && (now - data.lastSeen) > timeout) {
+        updateUserStatus(user, false);
+      }
+    }
+  }
+
+  setInterval(checkInactiveUsers, 10000); // Verificar cada 10 segundos
+
+  // ============ GESTIÓN DE CONTACTOS ============
+  function updateContactsList() {
+    const container = el.contactsList;
+    if (!container) return;
+
+    const allUsers = new Set([...onlineUsers.keys()]);
+    
+    if (allUsers.size === 0) {
+      container.innerHTML = `
+        <div class="text-center text-muted small">
+          <i class="bi bi-inbox"></i>
+          <p class="mb-0">Esperando otros usuarios...</p>
+          <p class="mb-0 mt-1"><small>Abre otra pestaña para probar</small></p>
+        </div>
+      `;
+      if (el.onlineCount) el.onlineCount.textContent = "0";
+      return;
+    }
+
+    const onlineCount = [...onlineUsers.values()].filter(u => u.online).length;
+    if (el.onlineCount) el.onlineCount.textContent = onlineCount;
+
+    const contacts = [...allUsers].sort((a, b) => {
+      const aFav = favoriteContacts.has(a);
+      const bFav = favoriteContacts.has(b);
+      const aOnline = onlineUsers.get(a)?.online || false;
+      const bOnline = onlineUsers.get(b)?.online || false;
+      
+      if (aFav && !bFav) return -1;
+      if (!aFav && bFav) return 1;
+      if (aOnline && !bOnline) return -1;
+      if (!aOnline && bOnline) return 1;
+      return a.localeCompare(b);
+    });
+
+    container.innerHTML = contacts.map(contactName => {
+      const keyData = sharedKeys.get(contactName);
+      const userData = onlineUsers.get(contactName);
+      const isActive = currentPeer === contactName;
+      const isFav = favoriteContacts.has(contactName);
+      const isOnline = userData?.online || false;
+      const fp = keyData ? keyData.fingerprint.substring(0, 17) + "..." : "Sin clave";
+      const unreadCount = 0; // Puedes implementar contador de no leídos
+
+      return `
+        <div class="contact-item ${isActive ? 'active' : ''}" data-contact="${contactName}">
+          <div class="d-flex justify-content-between align-items-start">
+            <div class="flex-grow-1">
+              <div class="contact-name">
+                <span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>
+                ${contactName}
+                ${isFav ? '<i class="bi bi-star-fill text-warning ms-1"></i>' : ''}
+                ${unreadCount > 0 ? `<span class="badge bg-danger ms-1">${unreadCount}</span>` : ''}
+              </div>
+              <div class="contact-status">
+                ${isOnline ? 'En línea' : 'Desconectado'}
+              </div>
+              <div class="contact-fingerprint">${fp}</div>
+            </div>
+            <button class="btn btn-favorite btn-outline-warning" data-favorite="${contactName}">
+              <i class="bi ${isFav ? 'bi-star-fill' : 'bi-star'}"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Event listeners
+    container.querySelectorAll('.contact-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.btn-favorite')) return;
+        const contactName = item.dataset.contact;
+        selectPeer(contactName);
+      });
+    });
+
+    container.querySelectorAll('.btn-favorite').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const contactName = btn.dataset.favorite;
+        toggleFavorite(contactName);
+      });
+    });
+  }
+
+  function selectPeer(peerName) {
+    if (currentPeer === peerName) return;
+    
+    currentPeer = peerName;
+    updateContactsList();
+    loadChatHistory(peerName);
+    
+    const badge = document.getElementById('currentPeer');
+    if (badge) {
+      badge.textContent = `${peerName}`;
+      badge.style.display = 'inline-block';
+    }
+
+    const keyData = sharedKeys.get(peerName);
+    if (keyData) {
+      el.fingerprint.textContent = keyData.fingerprint;
+      if (el.sharedInfo) {
+        el.sharedInfo.value = `Chateando con: ${peerName}\nFingerprint: ${keyData.fingerprint}`;
+      }
+    }
+
+    setControlsEnabled(true);
+    el.messageInput.focus();
+  }
+
+  // ============ MENSAJES UI ============
+  function appendMessage({ from, text, isOwn, info, peerName }) {
+    const message = { from, text, isOwn, info, timestamp: Date.now() };
+    
+    // Guardar en historial
+    const peer = isOwn ? currentPeer : from;
+    if (peer) {
+      addMessageToHistory(peer, message);
+    }
+
+    // Mostrar solo si es del chat actual
+    if (currentPeer === peer || (isOwn && currentPeer)) {
+      renderMessage(message);
+      el.messages.scrollTop = el.messages.scrollHeight;
+    }
   }
 
   function setStatus(connected) {
@@ -330,7 +424,7 @@ const ChatE2E = (() => {
     socket.onopen = () => {
       log("✅ WebSocket abierto");
       setStatus(true);
-      setControlsEnabled(true);
+      setControlsEnabled(false); // Deshabilitado hasta seleccionar contacto
 
       const msg = {
         type: "key",
@@ -339,45 +433,42 @@ const ChatE2E = (() => {
         ts: Date.now(),
       };
       socket.send(JSON.stringify(msg));
+      startHeartbeat();
       log("📤 Clave pública enviada");
-
-      appendMessage({
-        from: "Sistema",
-        text: "Conectado. Esperando otros usuarios...",
-        isOwn: false,
-        info: ""
-      });
     };
 
     socket.onmessage = async event => {
       try {
         const data = JSON.parse(event.data);
-        log("📨 Mensaje recibido:", data.type, "from:", data.from);
+
+        if (data.type === "heartbeat") {
+          if (data.from !== username) {
+            updateUserStatus(data.from, true);
+          }
+          return;
+        }
 
         if (data.type === "key") {
-          if (data.from === username) {
-            log("⏭️ Ignorando mi propia clave");
-            return;
-          }
+          if (data.from === username) return;
 
           log("📥 Clave recibida de:", data.from);
-          onlineUsers.add(data.from);
+          updateUserStatus(data.from, true);
 
           if (!sharedKeys.has(data.from)) {
-            log("🔐 Estableciendo clave compartida con", data.from);
             const theirPub = await importPublicKeyRaw(data.publicKey);
             const keyData = await deriveSharedKey(theirPub);
             sharedKeys.set(data.from, keyData);
 
-            appendMessage({
+            // Mensaje de sistema en el historial de ese usuario
+            addMessageToHistory(data.from, {
               from: "Sistema",
-              text: `✅ ${data.from} se conectó (clave establecida)`,
+              text: `✅ ${data.from} conectado (clave establecida)`,
               isOwn: false,
-              info: `Fingerprint: ${keyData.fingerprint}`
+              info: `Fingerprint: ${keyData.fingerprint}`,
+              timestamp: Date.now()
             });
           }
 
-          log("👥 Usuarios online actuales:", [...onlineUsers]);
           updateContactsList();
           return;
         }
@@ -400,7 +491,8 @@ const ChatE2E = (() => {
             from: data.from,
             text: plaintext,
             isOwn: false,
-            info: "Cifrado E2E (AES-GCM 256)"
+            info: "Cifrado E2E (AES-GCM 256)",
+            peerName: data.from
           });
         }
       } catch (e) {
@@ -412,14 +504,16 @@ const ChatE2E = (() => {
       log("🔌 WebSocket cerrado");
       setStatus(false);
       setControlsEnabled(false);
-      onlineUsers.clear();
-      currentPeer = null;
-      updateContactsList();
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      
+      // Marcar todos como desconectados
+      for (const user of onlineUsers.keys()) {
+        updateUserStatus(user, false);
+      }
     };
 
     socket.onerror = err => {
       console.error("❌ Error WebSocket:", err);
-      alert("Error en la conexión");
     };
   }
 
@@ -428,10 +522,18 @@ const ChatE2E = (() => {
       socket.close();
       socket = null;
     }
-    el.messages.innerHTML = "";
-    sharedKeys.clear();
-    onlineUsers.clear();
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    
     currentPeer = null;
+    el.messages.innerHTML = "";
+    
+    for (const user of onlineUsers.keys()) {
+      updateUserStatus(user, false);
+    }
+    
     updateContactsList();
   }
 
@@ -461,13 +563,13 @@ const ChatE2E = (() => {
       };
 
       socket.send(JSON.stringify(msg));
-      log("📤 Mensaje enviado a", currentPeer);
       
       appendMessage({
         from: "Tú",
         text: text,
         isOwn: true,
-        info: `Enviado a ${currentPeer}`
+        info: `Enviado a ${currentPeer}`,
+        peerName: currentPeer
       });
 
       el.messageInput.value = "";
@@ -491,12 +593,6 @@ const ChatE2E = (() => {
     el.sharedInfo = document.getElementById("sharedInfo");
     el.contactsList = document.getElementById("contactsList");
     el.onlineCount = document.getElementById("onlineCount");
-
-    if (!el.contactsList) {
-      console.error("❌ ERROR: No se encontró el elemento #contactsList");
-    } else {
-      log("✅ Elemento #contactsList encontrado");
-    }
 
     setStatus(false);
     setControlsEnabled(false);

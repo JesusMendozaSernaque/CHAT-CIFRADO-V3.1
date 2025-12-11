@@ -61,12 +61,21 @@ func (h *Hub) Run() {
 			}
 
 		case message := <-h.broadcast:
-			// Guardar mensajes de tipo "key" para nuevos clientes.
+			// Detectar tipo de mensaje
 			var meta struct {
 				Type string `json:"type"`
 			}
-			if err := json.Unmarshal(message, &meta); err == nil && meta.Type == "key" {
-				h.keyMessages = append(h.keyMessages, message)
+			if err := json.Unmarshal(message, &meta); err == nil {
+				// Guardar mensajes de tipo "key" para nuevos clientes
+				if meta.Type == "key" {
+					h.keyMessages = append(h.keyMessages, message)
+					log.Println("📥 Guardando clave pública para reenvío a nuevos clientes")
+				}
+
+				// Los mensajes de heartbeat también se retransmiten para sincronización
+				if meta.Type == "heartbeat" {
+					log.Println("💓 Heartbeat recibido, retransmitiendo...")
+				}
 			}
 
 			// Retransmitir a todos los clientes.
