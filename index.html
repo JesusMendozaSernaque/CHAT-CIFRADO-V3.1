@@ -1,13 +1,139 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat USS</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body {
+            min-height: 100vh;
+            background: radial-gradient(circle at top, #268c8a 0, #057b52 55%);
+        }
+
+        .chat-card {
+            background: linear-gradient(135deg, #2b9d53, #ffffff);
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+
+        .bg-gradient {
+            background: linear-gradient(135deg, #0f766e, #22c55e);
+        }
+
+        .bg-gradient-footer {
+            background: linear-gradient(135deg, #ffffffe2, #ffffff);
+            color: #000000;
+        }
+
+        .messages-area {
+            height: 360px;
+            overflow-y: auto;
+        }
+
+        .message-row {
+            margin-bottom: 0.35rem;
+        }
+
+        .message-row .meta {
+            font-size: 0.7rem;
+            opacity: 0.7;
+        }
+
+        .message-bubble {
+            display: inline-block;
+            padding: 0.35rem 0.6rem;
+            border-radius: 0.75rem;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        .message-own {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: #0f172a;
+        }
+
+        .message-other {
+            background: rgba(15, 23, 42, 0.85);
+            color: #e5e7eb;
+        }
+
+        .cipher-info {
+            font-size: 0.65rem;
+            opacity: 0.7;
+        }
+
+        /* NUEVOS ESTILOS PARA CONTACTOS */
+        .contacts-panel {
+            background: rgba(15, 23, 42, 0.7);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .contact-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .contact-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: #22c55e;
+        }
+
+        .contact-item.active {
+            background: rgba(34, 197, 94, 0.3);
+            border-color: #22c55e;
+        }
+
+        .contact-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .contact-status {
+            font-size: 0.7rem;
+            opacity: 0.8;
+        }
+
+        .contact-fingerprint {
+            font-family: monospace;
+            font-size: 0.65rem;
+            opacity: 0.7;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.3rem;
+        }
+
+        .status-online {
+            background: #22c55e;
+            box-shadow: 0 0 5px #22c55e;
+        }
+
+        .status-offline {
+            background: #64748b;
+        }
+
+        .btn-favorite {
+            font-size: 0.7rem;
+            padding: 0.1rem 0.4rem;
+        }
+    </style>
 </head>
 
 <body class="bg-dark text-light">
@@ -18,7 +144,6 @@
                     <div class="card-header bg-gradient text-white d-flex justify-content-between align-items-center">
                         <div>
                             <h4 class="mb-0"><i class="bi bi-shield-lock"></i> CHAT USS CIFRADO</h4>
-                        
                         </div>
                         <div class="text-end">
                             <div id="statusBadge" class="badge bg-danger">
@@ -32,6 +157,7 @@
 
                     <div class="card-body">
                         <div class="row g-3">
+                            <!-- Panel Izquierdo: Identidad + Contactos -->
                             <div class="col-md-4">
                                 <h6 class="text-uppercase text-muted mb-2">Identidad</h6>
                                 <div class="mb-2">
@@ -50,51 +176,55 @@
                                         </button>
                                     </div>
                                 </div>
+
+                                <!-- NUEVA SECCIÓN: LISTA DE CONTACTOS -->
+                                <div class="mb-2">
+                                    <h6 class="text-uppercase text-muted mb-2 mt-3">
+                                        <i class="bi bi-people-fill"></i> Contactos
+                                        <span id="onlineCount" class="badge bg-success ms-2">0</span>
+                                    </h6>
+                                    <div id="contactsList" class="contacts-panel">
+                                        <div class="text-center text-muted small">
+                                            <i class="bi bi-inbox"></i>
+                                            <p class="mb-0">Conecta para ver contactos</p>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="mb-2">
                                     <label class="form-label small mb-1">Clave compartida</label>
-                                    <textarea id="sharedInfo" class="form-control form-control-sm" rows="4" readonly></textarea>
-                                    <small class="text-muted">
-                                        Verifica que el <strong>fingerprint</strong> coincida con el de tu contacto
-                                        por un canal externo (autenticación ligera).
-                                    </small>
-                              <div class="mb-2">
-    <label class="form-label small mb-1">Opciones del chat</label>
-    <div class="d-grid gap-2">
+                                    <textarea id="sharedInfo" class="form-control form-control-sm" rows="3" readonly></textarea>
+                                </div>
 
-        <!-- Guardar TXT cifrado -->
-        <button id="saveChatBtn" class="btn btn-info btn-sm">
-            <i class="bi bi-save"></i> <strong>Guardar chat cifrado</strong>
-        </button>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Opciones</label>
+                                    <div class="d-grid gap-2">
+                                        <button id="saveChatBtn" class="btn btn-info btn-sm">
+                                            <i class="bi bi-save"></i> Guardar chat cifrado
+                                        </button>
+                                        <button id="clearHistoryBtn" class="btn btn-warning btn-sm">
+                                            <i class="bi bi-trash"></i> Limpiar historial
+                                        </button>
+                                    </div>
+                                </div>
 
-        <!-- Indicador -->
-        <p id="saveStatus" class="text-success small mt-1" style="display:none;">
-            🔐 El archivo cifrado se generó correctamente.
-        </p>
-
-        <!-- Limpiar historial -->
-        <button id="clearHistoryBtn" class="btn btn-warning btn-sm">
-            <i class="bi bi-trash"></i> <strong>Limpiar historial</strong>
-        </button>
-        <input type="file" id="fileDecrypt" accept=".txt">
-<button id="decryptBtn">Descifrar archivo</button>
-
-<textarea id="decryptOutput" rows="10" class="form-control mt-2"
-placeholder="Aquí aparecerá el texto descifrado"></textarea>
-
-
-    </div>
-</div>
-
-
-                                   <small class="text-muted">
-                                       
-
-                                    </small>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Descifrar archivo</label>
+                                    <input type="file" id="fileDecrypt" accept=".txt" class="form-control form-control-sm mb-1">
+                                    <button id="decryptBtn" class="btn btn-secondary btn-sm w-100">
+                                        <i class="bi bi-unlock"></i> Descifrar
+                                    </button>
+                                    <textarea id="decryptOutput" rows="3" class="form-control form-control-sm mt-2"
+                                        placeholder="Texto descifrado aparecerá aquí"></textarea>
                                 </div>
                             </div>
 
+                            <!-- Panel Derecho: Mensajes -->
                             <div class="col-md-8 d-flex flex-column">
-                                <h6 class="text-uppercase text-muted mb-2">Mensajes cifrados</h6>
+                                <h6 class="text-uppercase text-muted mb-2">
+                                    Mensajes cifrados
+                                    <span id="currentPeer" class="badge bg-primary ms-2" style="display:none;"></span>
+                                </h6>
                                 <div id="messages" class="flex-grow-1 border rounded p-2 mb-2 messages-area bg-black bg-opacity-25">
                                     <div class="text-center text-muted small mt-4">
                                         <i class="bi bi-chat-dots"></i>
@@ -113,7 +243,7 @@ placeholder="Aquí aparecerá el texto descifrado"></textarea>
                     </div>
 
                     <div class="card-footer text-center small text-muted bg-gradient-footer">
-                       <strong> GRUPO 01 - TALLER DE LENGUAJES DE PROGRAMACION<strong>
+                        <strong>GRUPO 01 - TALLER DE LENGUAJES DE PROGRAMACION</strong>
                     </div>
                 </div>
             </div>
@@ -123,8 +253,4 @@ placeholder="Aquí aparecerá el texto descifrado"></textarea>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/script.js"></script>
 </body>
-
 </html>
-
-
-
