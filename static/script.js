@@ -8,10 +8,10 @@ const ChatE2E = (() => {
   let username = "";
   let keyPair = null;
   let sharedKeys = new Map(); // Map<username, {aesKey, fingerprint}>
-  let currentPeer = null; // Usuario seleccionado actualmente
-  let onlineUsers = new Map(); // Map<username, {online: boolean, lastSeen: timestamp}>
-  let favoriteContacts = new Set(); // Contactos favoritos
-  let chatHistory = new Map(); // Map<username, Array<{from, text, isOwn, info, timestamp}>>
+  let currentPeer = null;
+  let onlineUsers = new Map();
+  let favoriteContacts = new Set();
+  let chatHistory = new Map();
   let heartbeatInterval = null;
 
   const el = {};
@@ -173,7 +173,6 @@ const ChatE2E = (() => {
     const history = chatHistory.get(peerName);
     history.push(message);
     
-    // Limitar a 500 mensajes por chat
     if (history.length > 500) {
       history.shift();
     }
@@ -243,12 +242,12 @@ const ChatE2E = (() => {
           ts: Date.now()
         }));
       }
-    }, 15000); // Cada 15 segundos
+    }, 15000);
   }
 
   function checkInactiveUsers() {
     const now = Date.now();
-    const timeout = 30000; // 30 segundos sin heartbeat = desconectado
+    const timeout = 30000;
     
     for (const [user, data] of onlineUsers.entries()) {
       if (data.online && (now - data.lastSeen) > timeout) {
@@ -257,7 +256,7 @@ const ChatE2E = (() => {
     }
   }
 
-  setInterval(checkInactiveUsers, 10000); // Verificar cada 10 segundos
+  setInterval(checkInactiveUsers, 10000);
 
   // ============ GESTIÓN DE CONTACTOS ============
   function updateContactsList() {
@@ -301,7 +300,6 @@ const ChatE2E = (() => {
       const isFav = favoriteContacts.has(contactName);
       const isOnline = userData?.online || false;
       const fp = keyData ? keyData.fingerprint.substring(0, 17) + "..." : "Sin clave";
-      const unreadCount = 0; // Puedes implementar contador de no leídos
 
       return `
         <div class="contact-item ${isActive ? 'active' : ''}" data-contact="${contactName}">
@@ -311,7 +309,6 @@ const ChatE2E = (() => {
                 <span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>
                 ${contactName}
                 ${isFav ? '<i class="bi bi-star-fill text-warning ms-1"></i>' : ''}
-                ${unreadCount > 0 ? `<span class="badge bg-danger ms-1">${unreadCount}</span>` : ''}
               </div>
               <div class="contact-status">
                 ${isOnline ? 'En línea' : 'Desconectado'}
@@ -326,7 +323,6 @@ const ChatE2E = (() => {
       `;
     }).join('');
 
-    // Event listeners
     container.querySelectorAll('.contact-item').forEach(item => {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.btn-favorite')) return;
@@ -373,13 +369,11 @@ const ChatE2E = (() => {
   function appendMessage({ from, text, isOwn, info, peerName }) {
     const message = { from, text, isOwn, info, timestamp: Date.now() };
     
-    // Guardar en historial
     const peer = isOwn ? currentPeer : from;
     if (peer) {
       addMessageToHistory(peer, message);
     }
 
-    // Mostrar solo si es del chat actual
     if (currentPeer === peer || (isOwn && currentPeer)) {
       renderMessage(message);
       el.messages.scrollTop = el.messages.scrollHeight;
@@ -424,7 +418,7 @@ const ChatE2E = (() => {
     socket.onopen = () => {
       log("✅ WebSocket abierto");
       setStatus(true);
-      setControlsEnabled(false); // Deshabilitado hasta seleccionar contacto
+      setControlsEnabled(false);
 
       const msg = {
         type: "key",
@@ -459,7 +453,6 @@ const ChatE2E = (() => {
             const keyData = await deriveSharedKey(theirPub);
             sharedKeys.set(data.from, keyData);
 
-            // Mensaje de sistema en el historial de ese usuario
             addMessageToHistory(data.from, {
               from: "Sistema",
               text: `✅ ${data.from} conectado (clave establecida)`,
@@ -474,6 +467,7 @@ const ChatE2E = (() => {
         }
 
         if (data.type === "msg") {
+          // CORRECCIÓN 1: No filtrar por campo "to", procesar todos los mensajes
           const keyData = sharedKeys.get(data.from);
           if (!keyData) {
             log("⚠️ Mensaje de usuario sin clave:", data.from);
@@ -506,7 +500,6 @@ const ChatE2E = (() => {
       setControlsEnabled(false);
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       
-      // Marcar todos como desconectados
       for (const user of onlineUsers.keys()) {
         updateUserStatus(user, false);
       }
@@ -579,6 +572,117 @@ const ChatE2E = (() => {
     }
   }
 
+  // ============ FUNCIÓN PARA GUARDAR CHAT CIFRADO ============
+  async function saveEncryptedChat() {
+    if (!currentPeer) {
+      alert("Selecciona un contacto primero");
+      return;
+    }
+
+    const keyData = sharedKeys.get(currentPeer);
+    if (!keyData) {
+      alert("No hay clave compartida con " + currentPeer);
+      return;
+    }
+
+    const history = chatHistory.get(currentPeer) || [];
+    if (history.length === 0) {
+      alert("No hay mensajes para guardar");
+      return;
+    }
+
+    // Unir todos los mensajes en texto plano
+    const plaintext = history
+      .map(msg => `[${msg.from}] ${msg.text}`)
+      .join("\n");
+
+    try {
+      // Cifrar todo el contenido
+      const { iv, ciphertext } = await encryptMessage(plaintext, currentPeer);
+
+      // Crear archivo con formato claro
+      const fileContent = `CHAT CIFRADO E2E
+Usuario: ${username}
+Contacto: ${currentPeer}
+Fecha: ${new Date().toLocaleString()}
+Fingerprint: ${keyData.fingerprint}
+-----BEGIN ENCRYPTED CHAT-----
+IV: ${iv}
+
+${ciphertext}
+-----END ENCRYPTED CHAT-----`;
+
+      const blob = new Blob([fileContent], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat_${currentPeer}_${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      log("💾 Chat cifrado guardado:", currentPeer);
+    } catch (e) {
+      console.error("Error guardando chat cifrado:", e);
+      alert("Error al guardar el chat");
+    }
+  }
+
+  // ============ FUNCIÓN PARA DESCIFRAR ARCHIVO ============
+  async function decryptFile(file) {
+    if (!currentPeer) {
+      alert("❌ Primero selecciona el contacto con quien guardaste el chat");
+      return null;
+    }
+
+    const keyData = sharedKeys.get(currentPeer);
+    if (!keyData) {
+      alert(`❌ No hay clave compartida con ${currentPeer}`);
+      return null;
+    }
+
+    try {
+      const text = await file.text();
+      
+      // Extraer IV (mejorado para coincidir con el formato de guardado)
+      const ivMatch = text.match(/IV:\s*([A-Za-z0-9+/=]+)/);
+      if (!ivMatch) {
+        alert("❌ Formato inválido: no se encontró el IV");
+        return null;
+      }
+
+      const ivB64 = ivMatch[1].trim();
+      
+      // Extraer ciphertext (la línea después del IV hasta END)
+      const ctMatch = text.match(/IV:.*?\n\n([\s\S]+?)(?:\n?-----END|$)/);
+      if (!ctMatch) {
+        alert("❌ Formato inválido: no se encontró el ciphertext");
+        return null;
+      }
+
+      const ctB64 = ctMatch[1].trim();
+
+      // Descifrar
+      const plaintext = await decryptMessage(ivB64, ctB64, currentPeer);
+      
+      log("✅ Archivo descifrado correctamente");
+      return plaintext;
+      
+    } catch (e) {
+      console.error("❌ Error descifrando:", e);
+      alert(`❌ No se pudo descifrar.\n\nPosibles causas:\n• La clave de ${currentPeer} no coincide\n• Archivo corrupto\n• Archivo cifrado con otro contacto`);
+      return null;
+    }
+  }
+
+  // ============ API PÚBLICA ============
+  function getCurrentPeer() {
+    return currentPeer;
+  }
+
+  function getSharedKeyForPeer(peerName) {
+    return sharedKeys.get(peerName)?.aesKey || null;
+  }
+
   function init() {
     log("🚀 Inicializando Chat E2E...");
 
@@ -608,7 +712,13 @@ const ChatE2E = (() => {
     log("✅ Chat E2E inicializado correctamente");
   }
 
-  return { init };
+  return { 
+    init, 
+    getCurrentPeer, 
+    getSharedKeyForPeer,
+    saveEncryptedChat,
+    decryptFile
+  };
 })();
 
 // =============== INICIALIZACIÓN ===============
@@ -616,25 +726,11 @@ document.addEventListener("DOMContentLoaded", () => {
   console.log("🎬 DOM cargado, iniciando aplicación...");
   ChatE2E.init();
 
-  // Botón guardar chat cifrado
+  // Botón guardar chat cifrado (CORREGIDO)
   const saveBtn = document.getElementById("saveChatBtn");
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
-      const messages = [...document.querySelectorAll(".message-bubble")];
-      if (messages.length === 0) {
-        alert("No hay mensajes para guardar");
-        return;
-      }
-
-      const text = messages.map(m => m.innerText).join("\n");
-      const blob = new Blob([text], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "chat_uss.txt";
-      a.click();
-      URL.revokeObjectURL(url);
-      console.log("💾 Chat guardado");
+      ChatE2E.saveEncryptedChat();
     });
   }
 
@@ -642,19 +738,36 @@ document.addEventListener("DOMContentLoaded", () => {
   const clearBtn = document.getElementById("clearHistoryBtn");
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
-      if (confirm("¿Eliminar todo el historial?")) {
-        document.getElementById("messages").innerHTML = "";
-        alert("Historial eliminado");
-        console.log("🗑️ Historial limpiado");
+      if (confirm("¿Eliminar todo el historial visible?")) {
+        document.getElementById("messages").innerHTML = `
+          <div class="text-center text-muted small mt-4">
+            <i class="bi bi-chat-dots"></i>
+            Historial limpiado
+          </div>
+        `;
+        console.log("🗑️ Historial visual limpiado");
       }
     });
   }
 
-  // Botón descifrar archivo
+  // Botón descifrar archivo (CORREGIDO)
   const decryptBtn = document.getElementById("decryptBtn");
-  if (decryptBtn) {
-    decryptBtn.addEventListener("click", () => {
-      alert("Funcionalidad de descifrado: pendiente de implementar");
+  const fileInput = document.getElementById("fileDecrypt");
+  const outputEl = document.getElementById("decryptOutput");
+
+  if (decryptBtn && fileInput && outputEl) {
+    decryptBtn.addEventListener("click", async () => {
+      if (!fileInput.files.length) {
+        alert("❌ Selecciona un archivo primero");
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const plaintext = await ChatE2E.decryptFile(file);
+      
+      if (plaintext) {
+        outputEl.value = plaintext;
+      }
     });
   }
 
